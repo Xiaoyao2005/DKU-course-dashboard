@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Word Cloud</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      background: #f0f0f0;
+    }
+    #container {
+      display: flex;
+      width: 100%;
+      max-width: 1600px;
+      gap: 20px;
+    }
+    #word-cloud {
+      flex: 3;
+      height: 600px;
+      border: 1px solid #ddd;
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      position: relative;
+    }
+    #comments {
+      flex: 1;
+      height: 600px;
+      border: 1px solid #ddd;
+      padding: 20px;
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      overflow-y: auto;
+    }
+    #filters {
+      width: 100%;
+      max-width: 1600px;
+      display: flex;
+      gap: 20px;
+      flex-wrap: wrap;
+      padding: 15px;
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      margin-bottom: 20px;
+    }
+    .filter-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    select {
+      padding: 8px 12px;
+      border-radius: 4px;
+      border: 1px solid #ddd;
+    }
+    #comments-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    #comments-list li {
+      padding: 10px;
+      margin: 5px 0;
+      background: #f8f8f8;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .loading {
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #ffeb3b;
+      padding: 10px 20px;
+      border-radius: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+    .caption {
+      margin-top: 10px;
+      font-size: 14px;
+      color: #666;
+    }
+    .legend {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .legend-color {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+    }
+  </style>
+</head>
+<body>
+  <div id="filters">
+    <div class="filter-group">
+      <label>Department:</label>
+      <select id="department-filter">
+        <option value="">All Departments</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <label>Subject:</label>
+      <select id="subject-filter">
+        <option value="">All Subjects</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <label>Number:</label>
+      <select id="number-filter">
+        <option value="">All Numbers</option>
+      </select>
+    </div>
+  </div>
+  <div id="container">
+    <div id="word-cloud"></div>
+    <div id="comments">
+      <h3>Related Comments:</h3>
+      <ul id="comments-list"></ul>
+    </div>
+  </div>
+  <div class="caption">
+    <p><strong>Color:</strong> Words are colored based on sentiment of the sentences they appear in.</p>
+    <p><strong>Size:</strong> The size of the words represents their frequency. Larger words appear more frequently in the dataset.</p>
+    <div class="legend">
+        <div class="legend-item">
+          <div class="legend-color" style="background: #d7191c"></div>
+          <span>Negative</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-color" style="background: #fdae61"></div>
+          <span>Neutral</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-color" style="background: #1a9641"></div>
+          <span>Positive</span>
+        </div>
+    </div>
+  </div>
+
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/d3-cloud@1.2.5/build/d3.layout.cloud.min.js"></script>
+
+  <script>
+    let appData = [];
+    let currentData = [];
+    let filters = {
+      department: "",
+      subject: "",
+      number: ""
+    };
+
+    const loading = d3.select("body")
+      .append("div")
+      .classed("loading", true)
+      .text("Loading data...");
+
+    Promise.all([
+      fetch("flat_course_data.json").then(r => r.json()),
+      new Promise(resolve => setTimeout(resolve, 500)) 
+    ])
+    .then(([data]) => {
+      appData = data;
+      initFilters();
+      updateVisualization();
+    })
+    .catch(error => {
+      console.error("Data loading error:", error);
+      alert("Failed to load data.");
+    })
+    .finally(() => loading.remove());
+
+    function initFilters() {
+      const deptSelect = d3.select("#department-filter");
+      const departments = [...new Set(appData.map(d => d.department))]
+        .sort((a, b) => a.localeCompare(b));
+      
+      deptSelect.selectAll("option:not(:first-child)").remove();
+      deptSelect.selectAll("option")
+        .data(departments)
+        .enter()
+        .append("option")
+        .text(d => d);
+
+      d3.selectAll("select")
+        .on("change", function() {
+          filters[this.id.replace("-filter", "")] = this.value;
+          handleFilterChange(this.id);
+          updateVisualization();
+        });
+
+      updateFilterOptions();
+    }
+
+    function updateFilterOptions() {
+      const subjects = [...new Set(
+        appData
+          .filter(d => !filters.department || d.department === filters.department)
+          .map(d => d.subject)
+      )].sort((a, b) => a.localeCompare(b));
+      
+      const subjectSelect = d3.select("#subject-filter");
+      subjectSelect.selectAll("option:not(:first-child)").remove();
+      subjectSelect.selectAll("option")
+        .data(subjects)
+        .enter()
+        .append("option")
+        .text(d => d)
+        .attr("selected", d => d === filters.subject ? true : null);
+
+      const numbers = [...new Set(
+        appData
+          .filter(d => d.department === filters.department && d.subject === filters.subject)
+          .map(d => d.number)
+      )].sort((a, b) => a.localeCompare(b));
+      
+      const numberSelect = d3.select("#number-filter");
+      numberSelect.selectAll("option:not(:first-child)").remove();
+      numberSelect.selectAll("option")
+        .data(numbers)
+        .enter()
+        .append("option")
+        .text(d => d)
+        .attr("selected", d => d === filters.number ? true : null);
+    }
+
+    function handleFilterChange(changedFilterId) {
+      if (changedFilterId === "department") {
+        d3.select("#subject-filter").property("value", "");
+        d3.select("#number-filter").property("value", "");
+        filters.subject = "";
+        filters.number = "";
+      } else if (changedFilterId === "subject") {
+        d3.select("#number-filter").property("value", "");
+        filters.number = "";
+      }
+      updateFilterOptions();
+    }
+
+    function mergeWords(filteredData) {
+      const wordMap = new Map();
+      filteredData.forEach(entry => {
+        const existing = wordMap.get(entry.word);
+        if (existing) {
+          const totalFreq = existing.frequency + entry.frequency;
+          existing.sentiment = 
+            (existing.sentiment * existing.frequency + 
+             entry.sentiment * entry.frequency) / totalFreq;
+          existing.frequency = totalFreq;
+          existing.comments.push(...entry.comments);
+        } else {
+          wordMap.set(entry.word, {
+            word: entry.word,
+            frequency: entry.frequency,
+            sentiment: entry.sentiment,
+            comments: [...entry.comments]
+          });
+        }
+      });
+      return Array.from(wordMap.values());
+    }
+
+    function getFilteredData() {
+      const filtered = appData.filter(d => {
+        return (!filters.department || d.department === filters.department) &&
+               (!filters.subject || d.subject === filters.subject) &&
+               (!filters.number || d.number === filters.number);
+      });
+      return mergeWords(filtered);
+    }
+
+    function updateVisualization() {
+      currentData = getFilteredData();
+      // Show loading indicator 
+      const loadingIndicator = d3.select("body")
+        .append("div")
+        .classed("loading", true)
+        .text("Updating view...");
+      
+      setTimeout(() => {
+        drawWordCloud(currentData);
+        loadingIndicator.remove();
+      }, 500);
+    }
+
+    function drawWordCloud(words) {
+      d3.select("#word-cloud").selectAll("*").remove();
+
+      if (!words.length) {
+        d3.select("#word-cloud")
+          .append("div")
+          .style("padding", "20px")
+          .text("No words found for current selection");
+        return;
+      }
+
+      const sizeScale = d3.scaleLinear()
+        .domain(d3.extent(words, d => d.frequency))
+        .range([14, 60]);
+
+      const layout = d3.layout.cloud()
+        .size([800, 600])
+        .words(words.map(d => ({
+          text: d.word,
+          size: sizeScale(d.frequency),
+          sentiment: d.sentiment,
+          comments: d.comments
+        })))
+        .padding(12)
+        .rotate(() => Math.random() < 0.5 ? 0 : 90)
+        .font("Impact")
+        .fontSize(d => d.size)
+        .spiral("rectangular")
+        .on("end", draw);
+
+      layout.start();
+
+      function draw(cloudWords) {
+        const svg = d3.select("#word-cloud")
+          .append("svg")
+          .attr("width", 800)
+          .attr("height", 600)
+          .append("g")
+          .attr("transform", "translate(400,300)");
+
+        const text = svg.selectAll("text")
+          .data(cloudWords)
+          .enter().append("text")
+          .style("font-size", d => `${d.size}px`)
+          .style("fill", d => d3.interpolateRdYlGn((d.sentiment + 1) / 2))
+          .style("cursor", "pointer")
+          .attr("text-anchor", "middle")
+          .attr("transform", d => `translate(${d.x},${d.y})rotate(${d.rotate})`)
+          .text(d => d.text)
+          .on("mouseover", function (event, d) {
+            d3.select(this)
+              .transition()
+              .style("font-size", d.size * 1.2 + "px");
+            showComments(d);
+          })
+          .on("mouseout", function (event, d) {
+            d3.select(this)
+              .transition()
+              .duration(200) // 添加过渡时间
+              .style("font-size", d.size + "px");
+          });
+
+        text
+          .style("opacity", 0)
+          .transition()
+          .duration(800)
+          .style("opacity", 1);
+      }
+    }
+
+    
+function showComments(d) {
+  const maxComments = 5; // comment to load every time
+  let displayedComments = maxComments; 
+
+  const comments = d.comments.slice(0, displayedComments);
+
+  const list = d3.select("#comments-list")
+    .selectAll("li:not(.load-more)") 
+    .data(comments);
+
+
+  list.enter()
+    .append("li")
+    .merge(list)
+    .text(d => d)
+    .style("opacity", 0)
+    .transition()
+    .duration(200)
+    .style("opacity", 1);
+
+  list.exit().remove();
+
+  if (d.comments.length > displayedComments) {
+    d3.select("#comments-list").select(".load-more").remove();
+    d3.select("#comments-list")
+      .append("li")
+      .classed("load-more", true)
+      .text(`+${d.comments.length - displayedComments} more comments...`)
+      .style("font-style", "italic")
+      .style("color", "#666")
+      .style("cursor", "pointer")
+      .on("click", function () {
+        displayedComments += maxComments;
+        const updatedComments = d.comments.slice(0, displayedComments);
+
+        const updatedList = d3.select("#comments-list")
+          .selectAll("li:not(.load-more)") 
+          .data(updatedComments);
+
+        updatedList.enter()
+          .append("li")
+          .merge(updatedList)
+          .text(d => d)
+          .style("opacity", 0)
+          .transition()
+          .duration(200)
+          .style("opacity", 1);
+
+        updatedList.exit().remove();
+
+        if (displayedComments >= d.comments.length) {
+          d3.select("#comments-list").select(".load-more").remove();
+        } else {
+          d3.select("#comments-list").select(".load-more").remove();
+          d3.select("#comments-list")
+            .append("li")
+            .classed("load-more", true)
+            .text(`+${d.comments.length - displayedComments} more comments...`)
+            .style("font-style", "italic")
+            .style("color", "#666")
+            .style("cursor", "pointer")
+            .on("click", arguments.callee); 
+        }
+      });
+  }
+}
+  </script>
+</body>
+</html>

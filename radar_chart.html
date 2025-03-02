@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Radar Chart</title>
+    <style>
+
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background: #f0f0f0;
+        }
+        #container {
+            display: flex;
+            width: 100%;
+            max-width: 1600px;
+            gap: 20px;
+        }
+        .radar-chart {
+            flex: 3;
+            height: 600px;
+            border: 1px solid #ddd;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            position: relative;
+            margin: 0px;
+            width: 80%;
+        }
+        .color-legend {
+            margin-top: 20px;
+            max-height: 200px;
+            overflow-y: auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            padding: 10px;
+        }
+        .color-legend div {
+            margin-bottom: 5px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        #tooltip {
+            position: absolute;
+            visibility: hidden;
+            background: white;
+            border: 1px solid #333;
+            padding: 8px;
+            border-radius: 4px;
+            pointer-events: none;
+            font-size: 12px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        button {
+            cursor: pointer;
+            padding: 8px 12px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            background: #007bff;
+            color: white;
+            font-size: 14px;
+            margin-top: 10px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        select {
+            padding: 8px 12px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            margin-right: 10px;
+        }
+        label {
+            margin-right: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div>
+        <label for="department">Department:</label>
+        <select id="department">
+            <option value="">Select Department</option>
+        </select>
+
+        <label for="subject">Subject:</label>
+        <select id="subject">
+            <option value="">Select Subject</option>
+        </select>
+
+        <label for="number">Number:</label>
+        <select id="number">
+            <option value="">Select Number</option>
+        </select>
+
+        <button id="addCourse">Add Course</button>
+    </div>
+
+    <div class="radar-chart"></div>
+    <div class="color-legend"></div>
+    <div id="tooltip"></div>
+
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script>
+        // load
+        const dataUrl = 'cleaned_course_data.csv';
+        let allData = [];
+        let selectedCourses = [];
+        const colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'];
+
+        // initialize tooltip
+        const tooltip = d3.select('#tooltip');
+
+        function updateFilters() {
+            const departments = [...new Set(allData.map(d => d.department))];
+            d3.select('#department')
+                .selectAll('option')
+                .data(departments)
+                .enter()
+                .append('option')
+                .text(d => d);
+
+            d3.select('#department').on('change', function() {
+                const selectedDepartment = d3.select(this).property('value');
+                updateSubjectFilter(selectedDepartment);
+                updateNumberFilter(selectedDepartment, '');
+            });
+
+            d3.select('#subject').on('change', function() {
+                const selectedDepartment = d3.select('#department').property('value');
+                const selectedSubject = d3.select(this).property('value');
+                updateNumberFilter(selectedDepartment, selectedSubject);
+            });
+        }
+
+        function updateSubjectFilter(department) {
+            const subjects = [...new Set(allData
+                .filter(d => d.department === department)
+                .map(d => d.Subject)
+            )];
+            const subjectSelect = d3.select('#subject');
+            subjectSelect.selectAll('option').remove();
+            subjectSelect.append('option').text('Select Subject');
+            subjectSelect.selectAll('option.subject')
+                .data(subjects)
+                .enter()
+                .append('option')
+                .attr('class', 'subject')
+                .text(d => d);
+        }
+
+        function updateNumberFilter(department, subject) {
+            const numbers = [...new Set(allData
+                .filter(d => d.department === department && (subject === '' || d.Subject === subject))
+                .map(d => d.Number)
+            )];
+            const numberSelect = d3.select('#number');
+            numberSelect.selectAll('option').remove();
+            numberSelect.append('option').text('Select Number');
+            numberSelect.selectAll('option.number')
+                .data(numbers)
+                .enter()
+                .append('option')
+                .attr('class', 'number')
+                .text(d => d);
+        }
+
+
+        function addCourse(department, subject, number) {
+            if (selectedCourses.length >= 5) {
+                alert("At most 5 courses can be added.");
+                return;
+            }
+
+            const selectedCourse = allData.find(d =>
+                d.department === department &&
+                d.Subject === subject &&
+                d.Number === number
+            );
+
+            if (!selectedCourse) {
+                alert("Course Not Found.");
+                return;
+            }
+
+            if (selectedCourses.some(c =>
+                c.department === department &&
+                c.Subject === subject &&
+                c.Number === number
+            )) {
+                alert("Course Already Added.");
+                return;
+            }
+
+            // color index
+            selectedCourse.colorIndex = selectedCourses.length % colors.length;
+            selectedCourse.visible = true; 
+            selectedCourses.push(selectedCourse);
+            updateRadarChart();
+        }
+
+        function updateColorLegend() {
+            const legend = d3.select('.color-legend')
+                .selectAll('div')
+                .data(selectedCourses, d => `${d.department}-${d.Subject}-${d.Number}`);
+
+            const legendItems = legend.enter()
+                .append('div')
+                .attr('class', 'legend-item');
+
+            legendItems.append('span')
+                .style('width', '20px')
+                .style('height', '20px')
+                .style('background-color', d => colors[d.colorIndex])
+                .style('border-radius', '4px');
+
+            legendItems.append('text')
+                .text(d => `${d.department} ${d.Subject} ${d.Number}`);
+
+            legendItems.append('button')
+                .text('×')
+                .on('click', (event, d) => {
+                    selectedCourses = selectedCourses.filter(course =>
+                        !(course.department === d.department &&
+                        course.Subject === d.Subject &&
+                        course.Number === d.Number)
+                    );
+                    updateRadarChart();
+                });
+
+            legendItems.append('button')
+                .text('Hide/Show')
+                .on('click', (event, d) => {
+                    d.visible = !d.visible;
+                    updateRadarChart();
+                });
+
+            legend.exit().remove();
+        }
+
+        function updateRadarChart() {
+        d3.select('.radar-chart').selectAll('svg').remove();
+
+        const radarData = selectedCourses.filter(d => d.visible);
+        const radarLabels = ['Difficulty', 'Quality', 'Take Again', '#Ratings', 'Avg Grade'];
+        const maxValue = [5, 5, 100, 150, 4];
+
+        const width = 500, height = 500, radius = Math.min(width, height) / 4;
+        const svg = d3.select('.radar-chart')
+            .append('svg')
+            .attr('width', width)
+            .attr('height', height)
+            .append('g')
+            .attr('transform', `translate(${width/2.4},${height / 2})`);
+
+        const angles = d3.range(0, 2 * Math.PI, 2 * Math.PI / radarLabels.length)
+            .map(a => a - Math.PI / 2);
+
+        // grid  (background)
+        const levels = 5;
+        for (let i = 0; i < levels; i++) {
+            const level = (i + 1) / levels;
+            svg.append('path')
+                .datum(angles)
+                .attr('d', d3.lineRadial()
+                    .radius(() => level * radius)
+                    .angle((_, i) => angles[i] + Math.PI / 2)
+                    .curve(d3.curveLinearClosed)
+                )
+                .attr('fill', 'none')
+                .attr('stroke', '#ccc')
+                .attr('stroke-width', 1);
+        }
+
+        // radar line
+        const radarLine = d3.lineRadial()
+            .curve(d3.curveLinearClosed)
+            .angle((_, i) => angles[i] + Math.PI / 2)
+            .radius((d, i) => (d / maxValue[i]) * radius);
+
+        svg.selectAll('.radar-path')
+            .data(radarData, d => `${d.department}-${d.Subject}-${d.Number}`)
+            .join('path')
+            .attr('class', 'radar-path')
+            .attr('d', d => radarLine(radarLabels.map(label => d[label])))
+            .attr('fill', d => colors[d.colorIndex])
+            .attr('fill-opacity', 0.3)
+            .attr('stroke', d => colors[d.colorIndex])
+            .attr('stroke-width', 2);
+
+        // data points (interactive)
+        radarLabels.forEach((label, i) => {
+            svg.selectAll(`.point-${i}`)
+                .data(radarData)
+                .join('circle')
+                .attr('class', `point-${i}`)
+                .attr('cx', d => (d[label] / maxValue[i]) * radius * Math.cos(angles[i]))
+                .attr('cy', d => (d[label] / maxValue[i]) * radius * Math.sin(angles[i]))
+                .attr('r', 5)
+                .attr('fill', d => colors[d.colorIndex])
+                .attr('stroke', 'black')
+                .attr('stroke-width', 1)
+                .style('opacity', 0.8)
+                .on('mouseover', function(event, d) {
+                    d3.select(this).transition().duration(200).attr('r', 8);
+                    tooltip.style('visibility', 'visible')
+                        .html(`${label}: ${d[label]}`);
+                })
+                .on('mousemove', function(event) {
+                    tooltip.style('top', `${event.pageY - 10}px`)
+                        .style('left', `${event.pageX + 10}px`);
+                })
+                .on('mouseout', function() {
+                    d3.select(this).transition().duration(200).attr('r', 5);
+                    tooltip.style('visibility', 'hidden');
+                });
+        });
+
+        // labels
+        svg.selectAll('.background-label')
+            .data(radarLabels)
+            .join('text')
+            .attr('x', (d, i) => (radius + 10) * Math.cos(angles[i]))
+            .attr('y', (d, i) => (radius + 10) * Math.sin(angles[i]))
+            .text(d => d)
+            .attr('text-anchor', (d, i) => angles[i] > Math.PI ? 'end' : 'start')
+            .attr('dominant-baseline', 'middle')
+            .style('font-size', '15px');
+        updateColorLegend();
+    }
+        d3.csv(dataUrl).then(data => {
+            allData = data;
+            updateFilters();
+            d3.select('#addCourse').on('click', () => {
+                const department = d3.select('#department').property('value');
+                const subject = d3.select('#subject').property('value');
+                const number = d3.select('#number').property('value');
+                addCourse(department, subject, number);
+            });
+
+            updateRadarChart();
+        });
+    </script>
+</body>
+</html>
